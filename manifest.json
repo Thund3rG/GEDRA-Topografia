@@ -1,0 +1,18 @@
+{
+  "short_name": "GEDRA",
+  "name": "GEDRA | Topografía",
+  "description": "Cálculos de poligonal cerrada y precisión topográfica",
+  "icons": [
+    {
+      "src": "GEDRA.jpg",
+      "sizes": "512x512",
+      "type": "image/jpeg",
+      "purpose": "any maskable"
+    }
+  ],
+  "start_url": "./index.html",
+  "display": "standalone",
+  "theme_color": "#0f172a",
+  "background_color": "#ffffff",
+  "orientation": "portrait"
+}

@@ -1,658 +1,177 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { initializeApp } from 'firebase/app';
-import { 
-  getFirestore, collection, doc, setDoc, getDoc, 
-  onSnapshot, addDoc, updateDoc, deleteDoc, query 
-} from 'firebase/firestore';
-import { 
-  getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged 
-} from 'firebase/auth';
-import { 
-  Plus, Trash2, ChevronRight, ArrowLeft, Sparkles, Loader2, Target, Calendar, Clock, Info, Map as MapIcon, ClipboardList
-} from 'lucide-react';
-
-// --- Configuración de Firebase ---
-const firebaseConfig = JSON.parse(__firebase_config);
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getFirestore(app);
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'gedra-topo-001';
-const apiKey = ""; 
-
-// --- Funciones de Ayuda ---
-const gmsToDecimal = (g, m, s) => {
-  const gg = parseFloat(g) || 0;
-  const mm = parseFloat(m) || 0;
-  const ss = parseFloat(s) || 0;
-  return gg + mm / 60 + ss / 3600;
-};
-
-const decimalToGms = (decimal, precisionMode = "Segundo") => {
-  if (isNaN(decimal)) return precisionMode === "Segundo" ? "0° 00' 00\"" : "0° 00'";
-  const abs = Math.abs(decimal);
-  const sign = decimal < 0 ? "-" : "";
-  const g = Math.floor(abs + 1e-9);
-  const m = Math.floor((abs - g) * 60 + 1e-9);
-  
-  if (precisionMode === "Minuto") {
-    const mRound = Math.round((abs - g) * 60);
-    let finalG = g;
-    let finalM = mRound;
-    if (finalM >= 60) { finalG++; finalM = 0; }
-    return `${sign}${finalG}° ${String(finalM).padStart(2, '0')}'`;
-  }
-  
-  const sVal = ((abs - g - m / 60) * 3600);
-  const sFinal = Math.abs(sVal).toFixed(2);
-  return `${sign}${g}° ${String(m).padStart(2, '0')}' ${String(sFinal).padStart(5, '0').replace(/^0/, '')}"`;
-};
-
-const formatGmsRaw = (decimal, mode) => {
-  if (isNaN(decimal)) return "-";
-  return decimalToGms(decimal, mode);
-};
-
-const toRad = (deg) => (deg * Math.PI) / 180;
-
-const decimalToRumbo = (azimut, mode) => {
-  let angle = azimut % 360;
-  if (angle < 0) angle += 360;
-  if (angle >= 0 && angle <= 90) return `N ${decimalToGms(angle, mode)} E`;
-  if (angle > 90 && angle <= 180) return `S ${decimalToGms(180 - angle, mode)} E`;
-  if (angle > 180 && angle <= 270) return `S ${decimalToGms(angle - 180, mode)} W`;
-  if (angle > 270 && angle < 360) return `N ${decimalToGms(360 - angle, mode)} W`;
-  return "N 0° 0' 0\" E";
-};
-
-export default function App() {
-  const [user, setUser] = useState(null);
-  const [screen, setScreen] = useState('splash');
-  const [projects, setProjects] = useState([]);
-  const [currentProject, setCurrentProject] = useState(null);
-  const [isCreating, setIsCreating] = useState(false);
-  const [aiAnalysis, setAiAnalysis] = useState("");
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
-
-  const logoUrl = "https://images.usercontent.goog/7d3a1a5c-0623-4d3f-9a49-8b8a21e390aa";
-
-  const handleInputFocus = (e) => {
-    e.target.select();
-  };
-
-  const handleWheel = (e) => {
-    e.target.blur();
-  };
-
-  useEffect(() => {
-    const initAuth = async () => {
-      if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-        await signInWithCustomToken(auth, __initial_auth_token);
-      } else {
-        await signInAnonymously(auth);
-      }
-    };
-    initAuth();
-    const unsubscribe = onAuthStateChanged(auth, (u) => {
-      setUser(u);
-      if (screen === 'splash') setTimeout(() => setScreen('manager'), 2000);
-    });
-    return () => unsubscribe();
-  }, []);
-
-  useEffect(() => {
-    if (!user) return;
-    const q = collection(db, 'artifacts', appId, 'users', user.uid, 'projects');
-    return onSnapshot(q, (snapshot) => {
-      setProjects(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-    }, (error) => console.error("Error fetching projects:", error));
-  }, [user]);
-
-  const handleCreateProject = async (e) => {
-    e.preventDefault();
-    const name = e.target.projectName.value;
-    if (!name || !user) return;
-    const newProject = {
-      name,
-      createdAt: new Date().toISOString(),
-      numSides: 4,
-      precisionG: "", precisionM: "", precisionS: "", 
-      equipmentOrder: "Segundo",
-      compMode: "Segundo",
-      angleMode: "Internos",
-      startAzG: "", startAzM: "", startAzS: "",
-      startX: 1000, startY: 1000,
-      data: Array(4).fill({ dist: "", g: "", m: "", s: "" })
-    };
-    await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'projects'), newProject);
-    setIsCreating(false);
-  };
-
-  const deleteProject = async (id, e) => {
-    e.stopPropagation();
-    if (!user) return;
-    await deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'projects', id));
-  };
-
-  const updateProjectData = async (updatedFields) => {
-    if (!user || !currentProject) return;
-    const projectRef = doc(db, 'artifacts', appId, 'users', user.uid, 'projects', currentProject.id);
-    await updateDoc(projectRef, updatedFields);
-    setCurrentProject(prev => ({ ...prev, ...updatedFields }));
-  };
-
-  const handleDataChange = (index, field, value) => {
-    const newData = [...currentProject.data];
-    newData[index] = { ...newData[index], [field]: value };
-    updateProjectData({ data: newData });
-  };
-
-  const calculations = useMemo(() => {
-    if (!currentProject || !currentProject.data) return null;
-    const n = parseInt(currentProject.numSides) || 0;
-    const data = currentProject.data;
-    const isMinMode = currentProject.compMode === "Minuto";
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GEDRA | Topografía</title>
     
-    const sumaTeorica = currentProject.angleMode === "Internos" ? (n - 2) * 180 : (n + 2) * 180;
-    let sumaReal = 0;
-    data.forEach(d => sumaReal += gmsToDecimal(d.g, d.m, d.s));
-    const errorAngular = sumaReal - sumaTeorica;
+    <link rel="manifest" href="./manifest.json">
+    <meta name="theme-color" content="#0f172a">
+    <link rel="apple-touch-icon" href="./GEDRA.jpg">
+
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
     
-    let corrections = Array(n).fill(0);
-    if (isMinMode) {
-      const errorTotalMinutos = Math.round((errorAngular * 3600) / 60);
-      if (errorTotalMinutos !== 0) {
-        const absErr = Math.abs(errorTotalMinutos);
-        const sign = errorTotalMinutos > 0 ? -1 : 1;
-        const interval = Math.floor(n / absErr);
-        let appliedCount = 0;
-        for (let i = 0; i < n; i++) {
-          if (appliedCount < absErr && (i + 1) % interval === 0) {
-            corrections[i] = (1 / 60) * sign;
-            appliedCount++;
-          }
-        }
-        let j = n - 1;
-        while (appliedCount < absErr && j >= 0) {
-          if (corrections[j] === 0) {
-            corrections[j] = (1 / 60) * sign;
-            appliedCount++;
-          }
-          j--;
-        }
-      }
-    } else {
-      corrections = Array(n).fill(-errorAngular / n);
-    }
+    <script src="https://unpkg.com/lucide@latest"></script>
 
-    const precisionEq = gmsToDecimal(currentProject.precisionG, currentProject.precisionM, currentProject.precisionS);
-    const toleranciaAngular = (precisionEq || 0) * Math.sqrt(n);
+    <style>
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        .animate-fadeIn { animation: fadeIn 0.5s ease-in-out; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
 
-    let azimutActual = gmsToDecimal(currentProject.startAzG, currentProject.startAzM, currentProject.startAzS);
-    let results = [];
-    let sumDist = 0;
-    let sumsNatural = { n: 0, s: 0, e: 0, o: 0, dn: 0, de: 0 };
-    let sumaCompensadaAng = 0;
+    <script type="text/babel">
+        const { useState, useEffect, useMemo } = React;
 
-    data.forEach((d, i) => {
-      const angleObs = gmsToDecimal(d.g, d.m, d.s);
-      const angleComp = angleObs + corrections[i];
-      sumaCompensadaAng += angleComp;
+        // --- Componentes de Iconos ---
+        const Icon = ({ name, size = 24, className = "" }) => {
+            const [iconSvg, setIconSvg] = useState("");
+            useEffect(() => {
+                if (window.lucide) {
+                    const svg = window.lucide.createIcons();
+                }
+            }, []);
+            return <i data-lucide={name} style={{width: size, height: size}} className={className}></i>;
+        };
 
-      if (i > 0) azimutActual = (azimutActual + 180 + angleComp) % 360;
+        // --- Funciones de Ayuda (Tu lógica original) ---
+        const gmsToDecimal = (g, m, s) => {
+            const gg = parseFloat(g) || 0;
+            const mm = parseFloat(m) || 0;
+            const ss = parseFloat(s) || 0;
+            return gg + mm / 60 + ss / 3600;
+        };
 
-      const dist = parseFloat(d.dist) || 0;
-      const dN = dist * Math.cos(toRad(azimutActual));
-      const dE = dist * Math.sin(toRad(azimutActual));
+        const decimalToGms = (decimal, precisionMode = "Segundo") => {
+            if (isNaN(decimal)) return precisionMode === "Segundo" ? "0° 00' 00\"" : "0° 00'";
+            const abs = Math.abs(decimal);
+            const sign = decimal < 0 ? "-" : "";
+            const g = Math.floor(abs + 1e-9);
+            const m = Math.floor((abs - g) * 60 + 1e-9);
+            if (precisionMode === "Minuto") {
+                const mRound = Math.round((abs - g) * 60);
+                let finalG = g; let finalM = mRound;
+                if (finalM >= 60) { finalG++; finalM = 0; }
+                return `${sign}${finalG}° ${String(finalM).padStart(2, '0')}'`;
+            }
+            const sVal = ((abs - g - m / 60) * 3600);
+            const sFinal = Math.abs(sVal).toFixed(2);
+            return `${sign}${g}° ${String(m).padStart(2, '0')}' ${String(sFinal).padStart(5, '0').replace(/^0/, '')}"`;
+        };
 
-      sumDist += dist;
-      sumsNatural.dn += dN;
-      sumsNatural.de += dE;
+        function App() {
+            const [screen, setScreen] = useState('splash');
+            const [projects, setProjects] = useState([]);
+            const [isCreating, setIsCreating] = useState(false);
+            
+            const logoUrl = "./GEDRA.jpg"; 
 
-      results.push({
-        est: `P${i + 1}`,
-        pv: `P${i === n - 1 ? 1 : i + 2}`,
-        dist,
-        angObs: angleObs,
-        angComp: angleComp,
-        azimut: azimutActual,
-        rumbo: decimalToRumbo(azimutActual, currentProject.compMode),
-        natN: dN > 0 ? dN : 0,
-        natS: dN < 0 ? Math.abs(dN) : 0,
-        natE: dE > 0 ? dE : 0,
-        natO: dE < 0 ? Math.abs(dE) : 0,
-        rawDN: dN,
-        rawDE: dE
-      });
-      
-      sumsNatural.n += dN > 0 ? dN : 0;
-      sumsNatural.s += dN < 0 ? Math.abs(dN) : 0;
-      sumsNatural.e += dE > 0 ? dE : 0;
-      sumsNatural.o += dE < 0 ? Math.abs(dE) : 0;
-    });
+            useEffect(() => {
+                const saved = localStorage.getItem('gedra_projects');
+                if (saved) setProjects(JSON.parse(saved));
+                
+                // Pantalla de carga de 2 segundos
+                const timer = setTimeout(() => {
+                    setScreen('manager');
+                    setTimeout(() => window.lucide.createIcons(), 100);
+                }, 2000);
+                return () => clearTimeout(timer);
+            }, []);
 
-    const errorLineal = Math.sqrt(Math.pow(sumsNatural.dn, 2) + Math.pow(sumsNatural.de, 2));
-    let curX = parseFloat(currentProject.startX) || 1000;
-    let curY = parseFloat(currentProject.startY) || 1000;
-    let areaSum = 0;
-    let sumsComp = { n: 0, s: 0, e: 0, o: 0 };
+            const saveProjects = (newProjects) => {
+                setProjects(newProjects);
+                localStorage.setItem('gedra_projects', JSON.stringify(newProjects));
+            };
 
-    results.forEach((r, i) => {
-      const corrN = sumDist > 0 ? -(sumsNatural.dn * (r.dist / sumDist)) : 0;
-      const corrE = sumDist > 0 ? -(sumsNatural.de * (r.dist / sumDist)) : 0;
-      
-      const dnComp = r.rawDN + corrN;
-      const deComp = r.rawDE + corrE;
-      
-      r.compN = dnComp > 0 ? dnComp : 0;
-      r.compS = dnComp < 0 ? Math.abs(dnComp) : 0;
-      r.compE = deComp > 0 ? deComp : 0;
-      r.compO = deComp < 0 ? Math.abs(deComp) : 0;
-      
-      sumsComp.n += r.compN;
-      sumsComp.s += r.compS;
-      sumsComp.e += r.compE;
-      sumsComp.o += r.compO;
+            const handleCreateProject = (e) => {
+                e.preventDefault();
+                const name = e.target.projectName.value;
+                const newProject = {
+                    id: Date.now().toString(),
+                    name,
+                    createdAt: new Date().toISOString(),
+                    data: []
+                };
+                saveProjects([newProject, ...projects]);
+                setIsCreating(false);
+            };
 
-      r.coordX = curX;
-      r.coordY = curY;
-
-      const nextX = curX + deComp;
-      const nextY = curY + dnComp;
-      areaSum += (curX * nextY) - (nextX * curY);
-      curX = nextX;
-      curY = nextY;
-    });
-
-    return {
-      results, sumsNatural, sumsComp,
-      errorAngular, errorAngularGms: decimalToGms(errorAngular, currentProject.compMode),
-      toleranciaAngular, toleranciaAngularGms: decimalToGms(toleranciaAngular, currentProject.compMode),
-      errorLineal, errorX: sumsNatural.de, errorY: sumsNatural.dn,
-      perimetro: sumDist,
-      area: Math.abs(areaSum) / 2,
-      sumaReal, sumaTeorica, sumaCompensadaAng
-    };
-  }, [currentProject]);
-
-  const generateAIAnalysis = async () => {
-    if (isAnalyzing || !calculations) return;
-    setIsAnalyzing(true);
-    const prec = (calculations.perimetro / Math.max(0.0001, calculations.errorLineal)).toFixed(0);
-    const prompt = `Analiza este levantamiento topográfico. Error Angular: ${calculations.errorAngularGms}. Tolerancia: ${calculations.toleranciaAngularGms}. Error Lineal: ${calculations.errorLineal.toFixed(4)}m. Precisión 1:${prec}. Unidad de trabajo: ${currentProject.compMode}. Dame consejos técnicos.`;
-    try {
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
-      });
-      const result = await response.json();
-      setAiAnalysis(result.candidates?.[0]?.content?.parts?.[0]?.text || "No se pudo generar el análisis.");
-    } catch (err) {
-      setAiAnalysis("Error de conexión con la IA.");
-    } finally {
-      setIsAnalyzing(false);
-    }
-  };
-
-  if (screen === 'splash') {
-    return (
-      <div className="h-screen bg-white flex flex-col items-center justify-center p-6 text-center">
-        <img src={logoUrl} alt="GEDRA Logo" className="w-64 h-auto mb-8 animate-pulse" />
-        <div className="w-48 h-1.5 bg-slate-100 rounded-full overflow-hidden">
-          <div className="h-full bg-yellow-500 animate-[loading_2s_linear]" style={{width: '100%'}}></div>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 pb-20 font-sans">
-      <style>{`
-        input::-webkit-outer-spin-button,
-        input::-webkit-inner-spin-button {
-          -webkit-appearance: none;
-          margin: 0;
-        }
-        input[type=number] {
-          -moz-appearance: textfield;
-        }
-      `}</style>
-      
-      <header className="bg-slate-900 text-white p-6 rounded-b-[2.5rem] shadow-xl flex justify-between items-center sticky top-0 z-40">
-        <div>
-          <h1 className="text-3xl font-black text-yellow-500">GEDRA | Topografía</h1>
-          <p className="text-slate-400 text-[10px] font-bold uppercase tracking-[0.2em]">Precisión en la Construcción</p>
-        </div>
-        {screen === 'project' && (
-          <button onClick={() => setScreen('manager')} className="p-3 bg-slate-800 rounded-2xl hover:bg-slate-700 transition-colors">
-            <ArrowLeft size={24} />
-          </button>
-        )}
-      </header>
-
-      <main className="p-4 -mt-4 max-w-full mx-auto space-y-6">
-        {screen === 'manager' ? (
-          <div className="max-w-4xl mx-auto space-y-4 pt-8">
-            <div className="flex justify-between items-center px-2 mb-6">
-              <h2 className="text-xl font-black text-slate-800">Mis Proyectos</h2>
-              <button onClick={() => setIsCreating(true)} className="bg-yellow-500 text-slate-900 px-6 py-3 rounded-2xl font-bold shadow-lg flex items-center gap-2 hover:scale-105 transition-all">
-                <Plus size={20} /> Nuevo Proyecto
-              </button>
-            </div>
-            <div className="grid gap-4">
-              {projects.sort((a,b) => new Date(b.createdAt) - new Date(a.createdAt)).map(p => (
-                <div key={p.id} onClick={() => { setCurrentProject(p); setScreen('project'); }} className="bg-white p-6 rounded-[2rem] shadow-sm border border-slate-100 flex justify-between items-center cursor-pointer hover:shadow-md transition-all group">
-                  <div className="flex-1">
-                    <h3 className="font-black text-lg text-slate-800 group-hover:text-yellow-600 transition-colors">{p.name}</h3>
-                    <div className="flex gap-4 mt-2 text-[10px] text-slate-400 font-bold uppercase">
-                      <span className="flex items-center gap-1"><Calendar size={12} className="text-yellow-500"/>{new Date(p.createdAt).toLocaleDateString()}</span>
-                      <span className="flex items-center gap-1"><Clock size={12} className="text-yellow-500"/>{new Date(p.createdAt).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</span>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-4">
-                    <button onClick={(e) => deleteProject(p.id, e)} className="p-3 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all"><Trash2 size={20} /></button>
-                    <ChevronRight className="text-slate-300 group-hover:translate-x-1 transition-transform" />
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        ) : (
-          <div className="space-y-6 pt-4">
-            {/* 1. Configuración General */}
-            <section className="bg-white p-6 rounded-[2.5rem] shadow-sm border border-slate-100 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-7 gap-4">
-              <div className="bg-slate-50 p-4 rounded-3xl">
-                <label className="text-[10px] font-black text-slate-400 uppercase mb-2 block">Vértices</label>
-                <input type="number" onFocus={handleInputFocus} onWheel={handleWheel} value={currentProject.numSides} onChange={(e) => {
-                  const n = Math.max(3, parseInt(e.target.value) || 3);
-                  const newData = Array(n).fill(null).map((_, idx) => currentProject.data[idx] || { dist: "", g: "", m: "", s: "" });
-                  updateProjectData({ numSides: n, data: newData });
-                }} className="w-full bg-white p-2 rounded-xl border font-bold text-sm outline-none" />
-              </div>
-              <div className="bg-slate-50 p-4 rounded-3xl">
-                <label className="text-[10px] font-black text-slate-400 uppercase mb-2 block">Unidad Trabajo</label>
-                <div className="flex bg-white rounded-xl p-1 border">
-                  {["Minuto", "Segundo"].map(m => (
-                    <button key={m} onClick={() => updateProjectData({ compMode: m })} className={`flex-1 py-1 rounded-lg text-[9px] font-black uppercase transition-all ${currentProject.compMode === m ? 'bg-slate-900 text-white' : 'text-slate-400'}`}>
-                      {m === "Minuto" ? "MIN" : "SEG"}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div className="bg-slate-50 p-4 rounded-3xl">
-                <label className="text-[10px] font-black text-slate-400 uppercase mb-2 block">Orden Equipo</label>
-                <select value={currentProject.equipmentOrder} onChange={(e) => updateProjectData({ equipmentOrder: e.target.value })} className="w-full bg-white p-2 rounded-xl border font-bold text-xs outline-none">
-                  <option value="Primero">Primer Orden</option>
-                  <option value="Segundo">Segundo Orden</option>
-                  <option value="Tercero">Tercer Orden</option>
-                </select>
-              </div>
-              <div className="bg-slate-50 p-4 rounded-3xl text-center">
-                <label className="text-[10px] font-black text-slate-400 uppercase mb-2 block">Precisión Equipo</label>
-                <div className="flex gap-1">
-                  <input type="number" placeholder="G" onWheel={handleWheel} className="w-full bg-white p-1.5 rounded-lg border text-center text-xs font-bold" value={currentProject.precisionG} onChange={e => updateProjectData({precisionG: e.target.value})} />
-                  <input type="number" placeholder="M" onWheel={handleWheel} className="w-full bg-white p-1.5 rounded-lg border text-center text-xs font-bold" value={currentProject.precisionM} onChange={e => updateProjectData({precisionM: e.target.value})} />
-                  {currentProject.compMode === "Segundo" && (
-                    <input type="number" placeholder="S" onWheel={handleWheel} className="w-full bg-white p-1.5 rounded-lg border text-center text-xs font-bold" value={currentProject.precisionS} onChange={e => updateProjectData({precisionS: e.target.value})} />
-                  )}
-                </div>
-              </div>
-              <div className="bg-slate-50 p-4 rounded-3xl text-center">
-                <label className="text-[10px] font-black text-slate-400 uppercase mb-2 block">Azimut Inicial</label>
-                <div className="flex gap-1">
-                  <input type="number" placeholder="G" onWheel={handleWheel} className="w-full bg-white p-1.5 rounded-lg border text-center text-xs font-bold" value={currentProject.startAzG} onChange={e => updateProjectData({startAzG: e.target.value})} />
-                  <input type="number" placeholder="M" onWheel={handleWheel} className="w-full bg-white p-1.5 rounded-lg border text-center text-xs font-bold" value={currentProject.startAzM} onChange={e => updateProjectData({startAzM: e.target.value})} />
-                  {currentProject.compMode === "Segundo" && (
-                    <input type="number" placeholder="S" onWheel={handleWheel} className="w-full bg-white p-1.5 rounded-lg border text-center text-xs font-bold" value={currentProject.startAzS} onChange={e => updateProjectData({startAzS: e.target.value})} />
-                  )}
-                </div>
-              </div>
-              <div className="bg-slate-50 p-4 rounded-3xl">
-                <label className="text-[10px] font-black text-slate-400 uppercase mb-2 block">Base (E, N)</label>
-                <div className="grid grid-cols-2 gap-1">
-                  <input type="number" placeholder="E" onWheel={handleWheel} value={currentProject.startX} onChange={e => updateProjectData({startX: e.target.value})} className="w-full bg-white p-1.5 rounded-lg border text-xs font-bold outline-none" />
-                  <input type="number" placeholder="N" onWheel={handleWheel} value={currentProject.startY} onChange={e => updateProjectData({startY: e.target.value})} className="w-full bg-white p-1.5 rounded-lg border text-xs font-bold outline-none" />
-                </div>
-              </div>
-              <div className="bg-slate-50 p-4 rounded-3xl flex items-end">
-                <button onClick={() => updateProjectData({ angleMode: currentProject.angleMode === "Internos" ? "Externos" : "Internos" })} className="w-full bg-slate-900 text-white p-2 rounded-xl text-[10px] font-black uppercase">
-                  {currentProject.angleMode}
-                </button>
-              </div>
-            </section>
-
-            {/* 2. REGISTRO DE CAMPO */}
-            <section className="bg-white p-8 rounded-[3rem] shadow-sm border border-slate-100">
-              <div className="flex items-center gap-3 mb-6">
-                <div className="p-3 bg-yellow-500 rounded-2xl text-slate-900 shadow-lg shadow-yellow-500/20">
-                  <ClipboardList size={24} />
-                </div>
-                <div>
-                  <h2 className="text-xl font-black text-slate-800">Registro de Campo</h2>
-                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Ingresa distancias y ángulos</p>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-                {currentProject.data.map((side, i) => (
-                  <div key={i} className="bg-slate-50 p-6 rounded-[2rem] border border-slate-100 group hover:border-yellow-200 hover:bg-white transition-all">
-                    <div className="flex justify-between items-center mb-4">
-                      <span className="text-[10px] font-black px-3 py-1 bg-slate-200 text-slate-600 rounded-full group-hover:bg-yellow-500 group-hover:text-slate-900 transition-colors uppercase">
-                        Estación P{i + 1}
-                      </span>
-                      <span className="text-[9px] font-bold text-slate-400">Hacia P{i === currentProject.numSides - 1 ? 1 : i + 2}</span>
-                    </div>
-                    
-                    <div className="space-y-4">
-                      <div>
-                        <label className="text-[9px] font-black text-slate-400 uppercase block mb-1 ml-1">Distancia (m)</label>
-                        <input 
-                          type="number" 
-                          step="any"
-                          placeholder="0.00"
-                          value={side.dist}
-                          onFocus={handleInputFocus}
-                          onWheel={handleWheel}
-                          onChange={(e) => handleDataChange(i, 'dist', e.target.value)}
-                          className="w-full bg-white p-3 rounded-2xl border-2 border-transparent focus:border-yellow-500 outline-none font-bold text-sm shadow-sm"
-                        />
-                      </div>
-                      
-                      <div>
-                        <label className="text-[9px] font-black text-slate-400 uppercase block mb-1 ml-1">Ángulo {currentProject.angleMode}</label>
-                        <div className="grid grid-cols-3 gap-2">
-                          <div className="relative">
-                            <input type="number" placeholder="G" value={side.g} onFocus={handleInputFocus} onWheel={handleWheel} onChange={(e) => handleDataChange(i, 'g', e.target.value)} className="w-full bg-white p-3 rounded-2xl border-2 border-transparent focus:border-yellow-500 outline-none font-bold text-center text-sm shadow-sm" />
-                            <span className="absolute top-1 right-2 text-[8px] text-slate-300 font-bold">°</span>
-                          </div>
-                          <div className="relative">
-                            <input type="number" placeholder="M" value={side.m} onFocus={handleInputFocus} onWheel={handleWheel} onChange={(e) => handleDataChange(i, 'm', e.target.value)} className="w-full bg-white p-3 rounded-2xl border-2 border-transparent focus:border-yellow-500 outline-none font-bold text-center text-sm shadow-sm" />
-                            <span className="absolute top-1 right-2 text-[8px] text-slate-300 font-bold">'</span>
-                          </div>
-                          {currentProject.compMode === "Segundo" && (
-                            <div className="relative">
-                              <input type="number" placeholder="S" value={side.s} onFocus={handleInputFocus} onWheel={handleWheel} onChange={(e) => handleDataChange(i, 's', e.target.value)} className="w-full bg-white p-3 rounded-2xl border-2 border-transparent focus:border-yellow-500 outline-none font-bold text-center text-sm shadow-sm" />
-                              <span className="absolute top-1 right-2 text-[8px] text-slate-300 font-bold">"</span>
-                            </div>
-                          )}
+            if (screen === 'splash') {
+                return (
+                    <div className="h-screen bg-white flex flex-col items-center justify-center p-6 text-center animate-fadeIn">
+                        <img src={logoUrl} alt="GEDRA Logo" className="w-64 h-auto mb-8" />
+                        <div className="w-48 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                            <div className="h-full bg-yellow-500 animate-[progress_2s_ease-in-out]" style={{width: '100%'}}></div>
                         </div>
-                      </div>
+                        <p className="mt-4 text-slate-400 font-bold text-xs uppercase tracking-widest">Cargando Herramientas...</p>
                     </div>
-                  </div>
-                ))}
-              </div>
-            </section>
+                );
+            }
 
-            {/* 3. Resumen Errores y Superficie */}
-            {calculations && (
-              <section className="bg-slate-900 text-white p-8 rounded-[3rem] shadow-2xl relative overflow-hidden">
-                <div className="absolute top-0 right-0 p-8 opacity-10"><Target size={100} /></div>
-                <h2 className="text-xl font-black mb-6 text-yellow-500">Resultados de Cierre ({currentProject.compMode})</h2>
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-6 relative z-10">
-                  <div className="bg-white/5 p-5 rounded-3xl border border-white/10">
-                    <p className="text-slate-400 text-[10px] font-black uppercase mb-2">Cierre Angular</p>
-                    <p className="text-xl font-black">{calculations.errorAngularGms}</p>
-                    <p className="text-[9px] text-slate-500 mt-1 uppercase">Tolerancia: {calculations.toleranciaAngularGms}</p>
-                  </div>
-                  <div className="bg-white/5 p-5 rounded-3xl border border-white/10">
-                    <p className="text-slate-400 text-[10px] font-black uppercase mb-2">Error Lineal Total</p>
-                    <p className="text-xl font-black text-yellow-500">{calculations.errorLineal.toFixed(2)} m</p>
-                    <div className="flex gap-4 mt-2 text-[9px] text-slate-400 font-bold">
-                      <span>dX: {calculations.errorX.toFixed(2)}</span>
-                      <span>dY: {calculations.errorY.toFixed(2)}</span>
-                    </div>
-                  </div>
-                  <div className="bg-white/5 p-5 rounded-3xl border border-white/10">
-                    <p className="text-slate-400 text-[10px] font-black uppercase mb-2">Precisión Relativa</p>
-                    <p className="text-xl font-black text-emerald-400">1 : {(calculations.perimetro / Math.max(0.0001, calculations.errorLineal)).toFixed(0)}</p>
-                    <p className="text-[9px] text-slate-400 mt-1 uppercase">Perímetro: {calculations.perimetro.toFixed(2)} m</p>
-                  </div>
-                  <div className="bg-white/10 p-5 rounded-3xl border-2 border-yellow-500/30">
-                    <p className="text-yellow-500 text-[10px] font-black uppercase mb-2">Superficie Total</p>
-                    <p className="text-xl font-black text-white">{calculations.area.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} m²</p>
-                    <p className="text-[9px] text-slate-400 mt-1 uppercase">{(calculations.area / 10000).toFixed(4)} Hectáreas</p>
-                  </div>
-                </div>
-              </section>
-            )}
+            return (
+                <div className="min-h-screen bg-slate-50 text-slate-900 pb-20 font-sans">
+                    <header className="bg-[#0f172a] text-white p-6 rounded-b-[2.5rem] shadow-xl flex justify-between items-center sticky top-0 z-40">
+                        <div>
+                            <h1 className="text-3xl font-black text-yellow-500">GEDRA</h1>
+                            <p className="text-slate-400 text-[10px] font-bold uppercase tracking-[0.2em]">Topografía de Precisión</p>
+                        </div>
+                        <button onClick={() => setIsCreating(true)} className="bg-yellow-500 p-3 rounded-2xl text-slate-900 shadow-lg shadow-yellow-500/20 active:scale-95 transition-transform">
+                            <i data-lucide="plus"></i>
+                        </button>
+                    </header>
 
-            {/* 4. Cartera de Cálculo */}
-            {calculations && (
-              <section className="bg-white rounded-[2.5rem] shadow-xl border border-slate-200 overflow-hidden">
-                <div className="p-6 bg-slate-50 border-b border-slate-200 flex justify-between items-center">
-                  <h3 className="font-black text-slate-800 uppercase text-xs tracking-widest">Cartera de Cálculo de Poligonal</h3>
-                </div>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-[9px] text-center border-collapse table-fixed min-w-[1600px]">
-                    <thead>
-                      <tr className="bg-slate-800 text-white font-black border-b border-slate-700">
-                        <th className="w-16 p-4" rowSpan="2">Est</th>
-                        <th className="w-16 p-4" rowSpan="2">PV</th>
-                        <th className="w-24 p-4" rowSpan="2">Dist (m)</th>
-                        <th className="w-32 p-4" rowSpan="2">Áng. Observado</th>
-                        <th className="w-32 p-4" rowSpan="2">Áng. Compensado</th>
-                        <th className="w-32 p-4" rowSpan="2">Azimut</th>
-                        <th className="w-32 p-4" rowSpan="2">Rumbo</th>
-                        <th className="p-2 border-b border-white/20" colSpan="4">Proyecciones Naturales</th>
-                        <th className="p-2 border-b border-white/20" colSpan="4">Proyecciones Compensadas</th>
-                        <th className="w-40 p-4 bg-yellow-600" colSpan="2" rowSpan="2">Coordenadas</th>
-                      </tr>
-                      <tr className="bg-slate-700 text-slate-300 font-bold">
-                        <th className="p-2">N (+)</th><th className="p-2">S (-)</th><th className="p-2">E (+)</th><th className="p-2">O (-)</th>
-                        <th className="p-2">N (+)</th><th className="p-2">S (-)</th><th className="p-2">E (+)</th><th className="p-2">O (-)</th>
-                      </tr>
-                    </thead>
-                    <tbody className="font-mono">
-                      {calculations.results.map((r, i) => (
-                        <tr key={i} className="border-t border-slate-100 hover:bg-slate-50 transition-colors">
-                          <td className="p-2 bg-slate-50 font-bold">{r.est}</td>
-                          <td className="p-2 text-slate-400">{r.pv}</td>
-                          <td className="p-2 font-bold">{r.dist.toFixed(3)}</td>
-                          <td className="p-2 bg-yellow-50/30 font-bold">{formatGmsRaw(r.angObs, currentProject.compMode)}</td>
-                          <td className="p-2 font-bold text-blue-700">{formatGmsRaw(r.angComp, currentProject.compMode)}</td>
-                          <td className="p-2 leading-tight">{decimalToGms(r.azimut, currentProject.compMode)}</td>
-                          <td className="p-2 italic text-slate-500">{r.rumbo}</td>
-                          <td className="p-2">{r.natN > 0 ? r.natN.toFixed(4) : ""}</td>
-                          <td className="p-2">{r.natS > 0 ? r.natS.toFixed(4) : ""}</td>
-                          <td className="p-2">{r.natE > 0 ? r.natE.toFixed(4) : ""}</td>
-                          <td className="p-2">{r.natO > 0 ? r.natO.toFixed(4) : ""}</td>
-                          <td className="p-2 font-bold text-emerald-700 bg-emerald-50/10">{r.compN > 0 ? r.compN.toFixed(4) : ""}</td>
-                          <td className="p-2 font-bold text-emerald-700 bg-emerald-50/10">{r.compS > 0 ? r.compS.toFixed(4) : ""}</td>
-                          <td className="p-2 font-bold text-emerald-700 bg-emerald-50/10">{r.compE > 0 ? r.compE.toFixed(4) : ""}</td>
-                          <td className="p-2 font-bold text-emerald-700 bg-emerald-50/10">{r.compO > 0 ? r.compO.toFixed(4) : ""}</td>
-                          <td className="p-2 bg-yellow-50 font-black border-l border-slate-200">{r.coordX.toFixed(4)}</td>
-                          <td className="p-2 bg-yellow-50 font-black">{r.coordY.toFixed(4)}</td>
-                        </tr>
-                      ))}
-                      <tr className="bg-slate-100 font-black border-t-2 border-slate-300">
-                        <td colSpan="2" className="p-3 text-right uppercase text-[8px]">Sumas:</td>
-                        <td className="p-2">{calculations.perimetro.toFixed(3)}</td>
-                        <td className="p-2">{decimalToGms(calculations.sumaReal, currentProject.compMode)}</td>
-                        <td className="p-2">{decimalToGms(calculations.sumaCompensadaAng, currentProject.compMode)}</td>
-                        <td colSpan="2"></td>
-                        <td className="p-2">{calculations.sumsNatural.n.toFixed(4)}</td>
-                        <td className="p-2">{calculations.sumsNatural.s.toFixed(4)}</td>
-                        <td className="p-2">{calculations.sumsNatural.e.toFixed(4)}</td>
-                        <td className="p-2">{calculations.sumsNatural.o.toFixed(4)}</td>
-                        <td className="p-2 bg-emerald-100/50">{calculations.sumsComp.n.toFixed(4)}</td>
-                        <td className="p-2 bg-emerald-100/50">{calculations.sumsComp.s.toFixed(4)}</td>
-                        <td className="p-2 bg-emerald-100/50">{calculations.sumsComp.e.toFixed(4)}</td>
-                        <td className="p-2 bg-emerald-100/50">{calculations.sumsComp.o.toFixed(4)}</td>
-                        <td colSpan="2" className="bg-yellow-100/50">Cierre: {calculations.errorLineal.toFixed(2)}m</td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-              </section>
-            )}
+                    <main className="p-4 pt-8">
+                        {projects.length === 0 ? (
+                            <div className="flex flex-col items-center justify-center py-20 text-slate-300">
+                                <i data-lucide="clipboard-list" style={{width: 48, height: 48}} className="mb-4"></i>
+                                <p className="font-bold">No hay proyectos activos</p>
+                            </div>
+                        ) : (
+                            <div className="grid gap-4">
+                                {projects.map(p => (
+                                    <div key={p.id} className="bg-white p-6 rounded-[2rem] shadow-sm border border-slate-100 flex justify-between items-center">
+                                        <div>
+                                            <h3 className="font-black text-slate-800">{p.name}</h3>
+                                            <p className="text-[10px] text-slate-400 font-bold uppercase">{new Date(p.createdAt).toLocaleDateString()}</p>
+                                        </div>
+                                        <i data-lucide="chevron-right" className="text-slate-300"></i>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </main>
 
-            {/* 5. Plano y IA */}
-            <section className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <div className="bg-white p-8 rounded-[3rem] shadow-sm border border-slate-100 flex flex-col items-center">
-                <h3 className="w-full font-black text-slate-800 uppercase text-xs tracking-widest mb-6 flex items-center gap-2"><MapIcon size={16} /> Plano de Poligonal</h3>
-                <div className="bg-slate-900 rounded-[2.5rem] aspect-square w-full max-w-[340px] p-8 relative border-8 border-slate-800 shadow-inner">
-                  <svg viewBox="0 0 240 240" className="w-full h-full">
-                    {calculations && (() => {
-                      const allX = calculations.results.map(r => r.coordX);
-                      const allY = calculations.results.map(r => r.coordY);
-                      const minX = Math.min(...allX), maxX = Math.max(...allX);
-                      const minY = Math.min(...allY), maxY = Math.max(...allY);
-                      const rangeX = (maxX - minX) || 1, rangeY = (maxY - minY) || 1;
-                      const scale = 140 / Math.max(rangeX, rangeY);
-                      const centerX = (maxX + minX) / 2, centerY = (maxY + minY) / 2;
-                      const getPx = (x) => 120 + (x - centerX) * scale;
-                      const getPy = (y) => 120 - (y - centerY) * scale;
-                      return (
-                        <>
-                          <polygon points={calculations.results.map(r => `${getPx(r.coordX)},${getPy(r.coordY)}`).join(' ')} className="fill-yellow-500/10 stroke-yellow-500 stroke-[2] stroke-dasharray-[5,5]" />
-                          {calculations.results.map((r, i) => (
-                            <g key={i}>
-                              <circle cx={getPx(r.coordX)} cy={getPy(r.coordY)} r="3" className="fill-white" />
-                              <text x={getPx(r.coordX) + 6} y={getPy(r.coordY) - 6} fontSize="8" className="fill-slate-400 font-bold">P{i+1}</text>
-                            </g>
-                          ))}
-                        </>
-                      );
-                    })()}
-                  </svg>
+                    {isCreating && (
+                        <div className="fixed inset-0 bg-slate-900/90 backdrop-blur-sm flex items-center justify-center p-6 z-50">
+                            <form onSubmit={handleCreateProject} className="bg-white w-full max-w-md rounded-[3rem] p-10 space-y-6 shadow-2xl">
+                                <h2 className="text-2xl font-black text-slate-800">Nuevo Levantamiento</h2>
+                                <input name="projectName" required autoFocus placeholder="Nombre del Proyecto..." className="w-full bg-slate-50 border-2 border-slate-100 p-5 rounded-[2rem] outline-none font-bold focus:border-yellow-500" />
+                                <div className="flex gap-3">
+                                    <button type="button" onClick={() => setIsCreating(false)} className="flex-1 p-5 font-black text-slate-400 uppercase text-[10px]">Cancelar</button>
+                                    <button type="submit" className="flex-[2] p-5 bg-yellow-500 rounded-[2rem] font-black text-slate-900 uppercase text-[10px] shadow-lg shadow-yellow-500/20">Crear</button>
+                                </div>
+                            </form>
+                        </div>
+                    ) }
                 </div>
-              </div>
+            );
+        }
 
-              <div className="bg-white p-8 rounded-[3rem] shadow-sm border border-slate-100 flex flex-col">
-                <div className="flex justify-between items-center mb-6">
-                  <h3 className="font-black text-slate-800 uppercase text-xs tracking-widest flex items-center gap-2"><Sparkles className="text-yellow-500" size={16} /> Auditoría Inteligente</h3>
-                  <button onClick={generateAIAnalysis} disabled={isAnalyzing} className="bg-slate-900 text-white px-6 py-2 rounded-2xl font-bold flex items-center gap-2 disabled:opacity-50">
-                    {isAnalyzing ? <Loader2 className="animate-spin" size={16} /> : <Sparkles size={16} />} Auditar
-                  </button>
-                </div>
-                <div className="flex-1 bg-slate-50 p-6 rounded-3xl border border-slate-100 overflow-y-auto max-h-[300px]">
-                  {aiAnalysis ? (
-                    <p className="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap font-medium">{aiAnalysis}</p>
-                  ) : (
-                    <div className="h-full flex flex-col items-center justify-center text-slate-300 text-center opacity-50">
-                      <Info size={32} className="mb-2" />
-                      <p className="text-[10px] font-bold uppercase tracking-widest">Ejecuta el auditor para validar datos</p>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </section>
-          </div>
-        )}
-      </main>
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
 
-      {isCreating && (
-        <div className="fixed inset-0 bg-slate-900/90 backdrop-blur-sm flex items-center justify-center p-6 z-50">
-          <form onSubmit={handleCreateProject} className="bg-white w-full max-w-md rounded-[3rem] p-10 space-y-6 shadow-2xl">
-            <h2 className="text-2xl font-black text-slate-800">Nuevo Levantamiento</h2>
-            <input name="projectName" required autoFocus placeholder="Nombre de la Obra/Proyecto..." className="w-full bg-slate-50 border-2 border-slate-100 p-5 rounded-[2rem] outline-none font-bold focus:border-yellow-500 transition-all" />
-            <div className="flex gap-3">
-              <button type="button" onClick={() => setIsCreating(false)} className="flex-1 p-5 font-black text-slate-400 uppercase text-[10px]">Cancelar</button>
-              <button type="submit" className="flex-1 p-5 bg-yellow-500 rounded-[2rem] font-black text-slate-900 shadow-lg">Comenzar</button>
-            </div>
-          </form>
-        </div>
-      )}
-    </div>
-  );
-}
+    <script>
+        // Registro del Service Worker para modo Offline
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('./sw.js').catch(err => console.log('SW error:', err));
+            });
+        }
+    </script>
+</body>
+</html>

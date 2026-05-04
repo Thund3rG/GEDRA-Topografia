@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>GEDRA | Topografía</title>
+    <meta name="theme-color" content="#1a2b3c">
+    <link rel="manifest" href="manifest.json">
+    <link rel="apple-touch-icon" href="GEDRA.jpg">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        #splash-screen {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: white; display: flex; flex-direction: column;
+            justify-content: center; align-items: center; z-index: 9999;
+            transition: opacity 0.5s ease;
+        }
+        .logo-anim { max-width: 200px; animation: pulse 2s infinite; }
+        @keyframes pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.05); } }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+    </style>
+</head>
+<body class="bg-gray-100 text-gray-800 font-sans">
+
+    <div id="splash-screen">
+        <img src="GEDRA.jpg" alt="GEDRA" class="logo-anim">
+        <p class="mt-4 text-xs tracking-widest text-gray-400 uppercase">Calculando Precisión...</p>
+    </div>
+
+    <main class="max-w-md mx-auto min-h-screen bg-white flex flex-col shadow-2xl">
+        <nav class="bg-[#1a2b3c] p-4 text-white flex justify-between items-center shadow-md">
+            <span class="font-bold tracking-tighter">GEDRA | TOPOGRAFÍA</span>
+            <div id="offline-tag" class="text-[10px] bg-green-600 px-2 py-0.5 rounded">ONLINE</div>
+        </nav>
+
+        <div class="p-5 flex-1">
+            <h2 class="text-xl font-bold text-[#1a2b3c] mb-4 border-b-2 border-[#b5935a] pb-1">Cálculo de Coordenadas</h2>
+            
+            <div class="space-y-4">
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-[10px] font-bold text-gray-400 uppercase">Estación Este (X)</label>
+                        <input type="number" id="est-x" value="1000.000" class="w-full border-b-2 border-gray-200 p-2 focus:border-[#1a2b3c] outline-none transition-colors">
+                    </div>
+                    <div>
+                        <label class="block text-[10px] font-bold text-gray-400 uppercase">Estación Norte (Y)</label>
+                        <input type="number" id="est-y" value="1000.000" class="w-full border-b-2 border-gray-200 p-2 focus:border-[#1a2b3c] outline-none transition-colors">
+                    </div>
+                </div>
+
+                <div class="bg-gray-50 p-4 rounded-xl border border-gray-100 space-y-4">
+                    <div>
+                        <label class="block text-[10px] font-bold text-gray-400 uppercase">Azimut (Grados Decimales)</label>
+                        <input type="number" id="azimut" placeholder="Ej: 145.25" class="w-full bg-transparent border-b-2 border-gray-300 p-2 focus:border-[#b5935a] outline-none">
+                    </div>
+                    <div>
+                        <label class="block text-[10px] font-bold text-gray-400 uppercase">Distancia Horizontal (m)</label>
+                        <input type="number" id="distancia" placeholder="Ej: 25.40" class="w-full bg-transparent border-b-2 border-gray-300 p-2 focus:border-[#b5935a] outline-none">
+                    </div>
+                </div>
+
+                <button onclick="calcularCoordenadas()" class="w-full bg-[#1a2b3c] text-white font-bold py-4 rounded-2xl shadow-lg active:scale-95 transition-transform">
+                    CALCULAR PUNTO
+                </button>
+
+                <div id="resultado" class="hidden mt-6 p-5 bg-[#fdfaf3] border-l-4 border-[#b5935a] rounded-r-xl">
+                    <h3 class="text-xs font-black text-[#b5935a] uppercase mb-3">Resultado del Punto</h3>
+                    <div class="space-y-2">
+                        <p class="flex justify-between"><span>Este (X):</span> <span id="res-x" class="font-mono font-bold"></span></p>
+                        <p class="flex justify-between"><span>Norte (Y):</span> <span id="res-y" class="font-mono font-bold"></span></p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <footer class="p-6 text-center text-[10px] text-gray-300 font-bold tracking-[0.3em]">
+            © 2026 GEDRA • INGENIERÍA CIVIL
+        </footer>
+    </main>
+
+    <script>
+        // Lógica de Topografía
+        function calcularCoordenadas() {
+            const x0 = parseFloat(document.getElementById('est-x').value);
+            const y0 = parseFloat(document.getElementById('est-y').value);
+            const az = parseFloat(document.getElementById('azimut').value);
+            const dist = parseFloat(document.getElementById('distancia').value);
+
+            if (isNaN(az) || isNaN(dist)) {
+                alert("Por favor, ingresa Azimut y Distancia");
+                return;
+            }
+
+            // Convertir grados a radianes: radianes = grados * (PI / 180)
+            const rad = az * (Math.PI / 180);
+
+            // Fórmulas Topográficas
+            // X = X0 + Dist * sen(Azimut)
+            // Y = Y0 + Dist * cos(Azimut)
+            const x1 = x0 + (dist * Math.sin(rad));
+            const y1 = y0 + (dist * Math.cos(rad));
+
+            document.getElementById('res-x').innerText = x1.toFixed(3);
+            document.getElementById('res-y').innerText = y1.toFixed(3);
+            document.getElementById('resultado').classList.remove('hidden');
+        }
+
+        // Manejo de Interfaz
+        window.addEventListener('load', () => {
+            setTimeout(() => {
+                document.getElementById('splash-screen').style.opacity = '0';
+                setTimeout(() => document.getElementById('splash-screen').style.display = 'none', 500);
+            }, 2000);
+        });
+
+        // Estado Offline
+        function checkStatus() {
+            const tag = document.getElementById('offline-tag');
+            if (navigator.onLine) {
+                tag.innerText = "ONLINE";
+                tag.className = "text-[10px] bg-green-600 px-2 py-0.5 rounded";
+            } else {
+                tag.innerText = "OFFLINE";
+                tag.className = "text-[10px] bg-orange-600 px-2 py-0.5 rounded";
+            }
+        }
+        window.addEventListener('online', checkStatus);
+        window.addEventListener('offline', checkStatus);
+        
+        // Registrar Service Worker
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('sw.js');
+        }
+    </script>
+</body>
+</html>
